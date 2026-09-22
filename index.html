@@ -549,6 +549,33 @@ table.tbl td:first-child{color:#cfe0d5;white-space:nowrap}
 #frozenBar{background:linear-gradient(90deg,#3a0d0d,#1a0606);border-bottom:1px solid #7a2a20;
   color:#ff8a72;font-size:12px;text-align:center;padding:7px 10px;font-weight:600}
 
+/* ---------- §18.1 账号 ---------- */
+.const.acct{cursor:pointer;border-color:#3a2f18}
+.const.acct b{color:#f6e27a}
+.const.acct:hover{border-color:#7a6420}
+.nick-input{width:100%;height:48px;border-radius:9px;border:1px solid #5a2020;background:#0f0707;
+  color:#ffd9c9;font-size:16px;padding:0 14px;margin:12px 0 4px;font-family:inherit;
+  outline:none;box-sizing:border-box}
+.nick-input::placeholder{color:#7a5a55}
+.nick-input:focus{border-color:#e8402f}
+.acct-row{display:flex;align-items:center;gap:8px;text-align:left;font-size:13px}
+.acct-row .mono{color:#8d8d8d;font-size:11.5px;margin-left:auto}
+.acct-row .flag{color:#ff8a72}
+
+/* ---------- §19 荣誉榜 ---------- */
+.board-seg{border-radius:10px;padding:12px;margin-bottom:10px}
+.board-seg.gold{background:linear-gradient(170deg,#2a1f08,#161005);border:1px solid #6a5420}
+.board-seg.cold{background:#0d1317;border:1px solid #24404d}
+.board-seg h3{font-size:15px;margin-bottom:8px}
+.board-row{font-size:12.5px;color:#e8c86a;line-height:1.85;font-family:var(--mono);
+  border-bottom:1px dashed #3a2f18;padding:4px 0}
+.board-row:last-child{border-bottom:none}
+.board-row b{color:#ffb84d}
+.board-real{font-size:12.5px;color:#8fc7dd;line-height:2;border-bottom:1px dashed #1c3340;padding:4px 0}
+.board-real:last-of-type{border-bottom:none}
+.board-real b{color:#d6eef8;font-family:var(--mono)}
+#cardLayer canvas.record{width:100%;max-width:560px;border-radius:12px;background:#0d0d0d}
+
 /* ---------- 手机适配 ---------- */
 @media (max-width:600px){
   main{padding:11px 9px 34px}
@@ -606,6 +633,7 @@ table.tbl td:first-child{color:#cfe0d5;white-space:nowrap}
 <!-- ===================== 顶部三常量 ===================== -->
 <div id="topbar">
   <div class="row">
+    <div class="const acct" id="acctChip" title="切换账号">🎫 账号 <b id="cAcct">—</b></div>
     <div class="const bal">💰 余额 <b id="cBal">¥1,000</b></div>
     <div class="const rc">今日累计充值 <b id="cRc">¥0</b></div>
     <div class="const tm">⏱ 已玩 <b id="cTm">0分钟</b></div>
@@ -638,7 +666,7 @@ table.tbl td:first-child{color:#cfe0d5;white-space:nowrap}
         任意一桌累计亏损满 <b>¥500</b> 会解锁该桌的 <b>揭秘卡</b>（红黑卡，盖"已解密"章）。
       </div>
       <div id="lobbyFoot">
-        <button class="btn s" style="width:auto;padding:9px 14px;margin:0" id="btnBoard">🏆 破产速通榜</button>
+        <button class="btn s" style="width:auto;padding:9px 14px;margin:0" id="btnBoard">🏆 荣誉榜</button>
         <button class="btn s" style="width:auto;padding:9px 14px;margin:0" id="btnWrench" title="后台">🔧</button>
         <span class="mini" id="wrenchHint"></span>
       </div>
@@ -816,6 +844,59 @@ const Store = (() => {
 
 const K_SAVE = 'jdc_save_v1', K_BOARD = 'jdc_board_v1', K_CARDS = 'jdc_cards_v1';
 
+/* ============================================================================
+   §18 v1.5 账号系统：零后端的"伪账号" + 哈希定命
+   不做真账号（无密码、无后端、无网络），用昵称的确定性哈希在本地推出
+   "这个账号的命运参数"——等价于服务端分配，代价为零，断网可用。
+   ============================================================================ */
+const K_ACCTS = 'ag.accts', K_CUR = 'ag.current';
+const saveKeyOf = nick => 'ag.save.' + nick;
+
+/* FNV-1a 32 位哈希：纯 JS、确定性、无依赖 */
+function fnv1a(str){
+  let h = 0x811c9dc5;
+  for (let i = 0; i < str.length; i++){
+    h ^= str.charCodeAt(i);
+    h = (h + ((h << 1) + (h << 4) + (h << 7) + (h << 8) + (h << 24))) >>> 0;
+  }
+  return h >>> 0;
+}
+/* 昵称规范化：trim → 小写 → 只保留中文/字母/数字 → 限长 1–12 */
+function normalizeNick(s){
+  return String(s == null ? '' : s).trim().toLowerCase()
+    .replace(/[^一-龥a-z0-9]/g, '').slice(0, 12);
+}
+/* 哈希定命：同一昵称在任何设备上算出的参数完全一致 */
+function accountFate(nick){
+  const h = fnv1a(nick);
+  return {
+    nick: nick,
+    h: h,
+    id: h % 900000 + 100000,                             // 6 位账号编号
+    watch: (h % 100) < 10,                               // 10% 重点关照
+    fishQuota: 300 + (Math.floor(h / 100) % 5) * 100,    // 养鱼期额度 ¥300–700
+    fishMult: 1.20 + (h % 3) * 0.05,                     // 养鱼期倍率 1.20/1.25/1.30
+    killMult: 0.70 + (Math.floor(h / 1000) % 5) * 0.01   // 杀猪期倍率 0.70–0.74
+  };
+}
+let ACCT = null;                                          // 当前账号的命运参数
+function acctList(){ const a = Store.get(K_ACCTS, []); return Array.isArray(a) ? a : []; }
+function rememberAcct(nick){
+  const l = acctList();
+  if (l.indexOf(nick) < 0){ l.push(nick); Store.set(K_ACCTS, l); }
+}
+/* 提现冻结门槛按账号标签定（§18.3） */
+function freezeThreshold(){
+  return ACCT && ACCT.watch
+    ? { recharge: 500,  balance: 1000 }
+    : { recharge: 1000, balance: 2000 };
+}
+/* 未注册时的兜底命运参数（与 v1.4 一致） */
+function acctFate(){
+  return ACCT || { nick:'', id:0, watch:false, fishQuota:500, fishMult:1.25, killMult:0.72 };
+}
+const FISH_MAX_ROUNDS = 20;      // 养鱼期最多 20 局
+
 /* ---------------------------------------------------------------- 换算基准表（§3.2） */
 const CONV = {
   meal:   { unit: 15,   name: '学校食堂一顿饭' },
@@ -913,11 +994,12 @@ function onBankrupt(){
     S.bustAtSecond = S.seconds - S.firstBetSecond;
     if (S.bustAtSecond < 0) S.bustAtSecond = S.seconds;
   }
-  saveBoard();
+  saveBoard(); save();
 }
 
-/* ---------------------------------------------------------------- 破产速通榜 */
-let BOARD = Store.get(K_BOARD, { fastBust: null, maxLoss: 0, maxStreak: 0, rechargeKing: 0, busts: 0 });
+/* ------------------------------------------- 荣誉榜 / 本机排行榜（§18.5 随账号存档） */
+const BLANK_BOARD = () => ({ fastBust:null, maxLoss:0, maxStreak:0, rechargeKing:0, busts:0 });
+let BOARD = BLANK_BOARD();
 function saveBoard(){
   BOARD.busts = S.bankruptCount;
   if (S.bustAtSecond != null && (BOARD.fastBust == null || S.bustAtSecond < BOARD.fastBust))
@@ -925,25 +1007,26 @@ function saveBoard(){
   if (S.maxSingleLoss > BOARD.maxLoss) BOARD.maxLoss = S.maxSingleLoss;
   if (S.bestLoseStreak > BOARD.maxStreak) BOARD.maxStreak = S.bestLoseStreak;
   if (S.recharged > BOARD.rechargeKing) BOARD.rechargeKing = S.recharged;
-  Store.set(K_BOARD, BOARD);
 }
 
 /* ---------------------------------------------------------------- 存档 */
 function save(){
-  Store.set(K_SAVE, {
+  if (!ACCT) return;
+  saveBoard();
+  Store.set(saveKeyOf(ACCT.nick), {
     balance: S.balance, bonus: S.bonus, recharged: S.recharged,
     totalStaked: S.totalStaked, totalReturned: S.totalReturned, totalBetVolume: S.totalBetVolume,
     bankruptCount: S.bankruptCount, seconds: S.seconds, tableLoss: S.tableLoss,
     tableStake: S.tableStake, unlocked: S.unlocked, bonusGiven: S.bonusGiven,
     bestLoseStreak: S.bestLoseStreak, maxSingleLoss: S.maxSingleLoss,
-    redpack: S.redpack, cheat: CHEAT.save(), day: todayKey(),
+    redpack: S.redpack, cheat: CHEAT.save(), day: todayKey(), board: BOARD,
     wdStage: S.wdStage, wdSuccess: S.wdSuccess, frozen: S.frozen, lastTier: S.lastTier
   });
-  saveBoard();
 }
 function todayKey(){ const d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
 function load(){
-  const d = Store.get(K_SAVE, null);
+  if (!ACCT) return;
+  const d = Store.get(saveKeyOf(ACCT.nick), null);
   if (!d) return;
   if (d.day !== todayKey()){                    // 跨天：今日累计充值归零，其余保留
     d.recharged = 0; d.bonusGiven = false;
@@ -957,7 +1040,24 @@ function load(){
   if (d.tableStake)  Object.assign(S.tableStake, d.tableStake);
   if (d.unlocked)    Object.assign(S.unlocked, d.unlocked);
   if (d.redpack)     S.redpack = d.redpack;
+  if (d.board)       BOARD = Object.assign(BLANK_BOARD(), d.board);
   if (d.cheat) CHEAT.load(d.cheat);
+}
+/* 切换账号时把内存状态清回初始值（§18.5 各账号完全隔离） */
+function resetState(){
+  S.balance = 1000; S.bonus = 0; S.recharged = 0; S.bankruptDeclared = false;
+  S.totalStaked = 0; S.totalReturned = 0; S.totalBetVolume = 0;
+  S.bankruptCount = 0; S.seconds = 0; S.bonusGiven = false;
+  S.loseStreak = 0; S.bestLoseStreak = 0; S.maxSingleLoss = 0;
+  S.bustAtSecond = null; S.firstBetSecond = null;
+  S.withdrawStage = 0; S.wdStage = 0; S.wdSuccess = 0; S.frozen = false;
+  S.lastTier = 0; S.kefuN = 0; S.timeWarned = 0; S.lastLossAmount = 0;
+  Object.keys(S.tableLoss).forEach(k => delete S.tableLoss[k]);
+  Object.keys(S.tableStake).forEach(k => delete S.tableStake[k]);
+  Object.keys(S.unlocked).forEach(k => delete S.unlocked[k]);
+  S.redpack = { tails:[0,0,0,0,0,0,0,0,0,0], n:0, sum:0, hit:0 };
+  BOARD = BLANK_BOARD();
+  CHEAT.reset();
 }
 /* ============================================================================
    §2 赌桌元数据 / 导航
@@ -1038,6 +1138,8 @@ function go(viewId){
    §2 顶部三常量
    ============================================================================ */
 function refreshTopbar(){
+  const ac = $('#cAcct');
+  if (ac) ac.textContent = ACCT ? ACCT.id : '—';
   const b = $('#cBal');
   const txt = yuan0(S.balance);
   if (b.textContent !== txt){ b.textContent = txt; b.classList.remove('pop'); void b.offsetWidth; b.classList.add('pop'); }
@@ -1524,12 +1626,12 @@ function openWithdraw(){
     return;
   }
 
-  /* —— 阶段 3：彩蛋。按账户金额一次判定，与点击次数无关（仅限真实充值过的账户） —— */
-  if (S.recharged > 0 && (S.recharged >= 1000 || S.balance >= 2000)){
-    closeAllModals(); triggerFrozen(); return;          // 重度用户 / 大额提现被风控收网
-  }
-  if (S.recharged > 0 && S.balance >= 500 && Math.random() < 0.10){
-    closeAllModals(); triggerFrozen(); return;          // 随机彩蛋预览
+  /* —— 阶段 3：彩蛋。按账户金额一次判定，与点击次数无关（仅限真实充值过的账户）。
+     §18.3：门槛由账号标签决定——10% 的"重点关照"账号门槛减半，
+     原来的"余额 ≥¥500 时每次点击 10% 随机"已作废。 —— */
+  const th = freezeThreshold();
+  if (S.recharged > 0 && (S.recharged >= th.recharge || S.balance >= th.balance)){
+    closeAllModals(); triggerFrozen(); return;
   }
 
   /* —— 阶段 2：永远差一点 —— */
@@ -1685,15 +1787,20 @@ const CHEAT = (() => {
   }
   function isFish(){
     if (st.fishEnded) return false;
-    if (S.totalReturned - S.totalStaked >= 500){ endFish('累计喂养 ¥500'); return false; }
-    if (st.rounds >= 20){ endFish('20 局用尽'); return false; }
+    const f = acctFate();
+    if (S.totalReturned - S.totalStaked >= f.fishQuota){
+      endFish('累计喂养 ¥' + f.fishQuota); return false;
+    }
+    if (st.rounds >= FISH_MAX_ROUNDS){ endFish(FISH_MAX_ROUNDS + ' 局用尽'); return false; }
     return true;
   }
   const hookOn = () => withdrawProgress() >= 0.70;
   /* 只读版本：供展示用，不推进任何状态 */
   function currentMult(){
-    const fish = !st.fishEnded && (S.totalReturned - S.totalStaked < 500) && (st.rounds < 20);
-    let m = fish ? 1.25 : 0.72;
+    const f = acctFate();
+    const fish = !st.fishEnded && (S.totalReturned - S.totalStaked < f.fishQuota)
+                 && (st.rounds < FISH_MAX_ROUNDS);
+    let m = fish ? f.fishMult : f.killMult;
     if (hookOn()) m *= 0.85;
     return m;
   }
@@ -1706,9 +1813,10 @@ const CHEAT = (() => {
     lastWasFish(){ const l = st.log[st.log.length - 1]; return !!(l && l.fish); },
     /* 登记一局，返回本局"你的真实胜率" */
     rate(tid, baseRate){
+      const f = acctFate();
       const fish = isFish();
       st.rounds++;
-      const baseMult = fish ? 1.25 : 0.72;
+      const baseMult = fish ? f.fishMult : f.killMult;
       const hook = hookOn();
       const eff = baseMult * (hook ? 0.85 : 1);
       const applied = clamp(baseRate * eff, 0.005, 0.97);
@@ -1749,7 +1857,32 @@ function openWrench(){
       '<td style="font-family:var(--mono);color:#e74c3c">' + pct(real) + '</td>' +
       '<td style="font-family:var(--mono);color:#e74c3c">−' + ((pp.p - real) * 100).toFixed(2) + 'pp</td></tr>';
   }).join('');
+  /* §18.4 本账号档案——新的教学爆点：平台后台里，你的账号是有标签的 */
+  const f = acctFate(), th2 = freezeThreshold();
+  const acctBlock =
+    '<div style="background:#12100a;border:1px solid #3a2f18;border-radius:9px;' +
+      'padding:11px 12px;margin-bottom:14px">' +
+      '<div style="font-size:13px;color:#e8c86a;font-weight:700;margin-bottom:7px">' +
+        '📇 本账号档案</div>' +
+      '<div class="mini" style="font-family:var(--mono);line-height:2;color:#c9bda0">' +
+        '账号编号　<b style="color:#f6e27a">' + f.id + '</b>　（' + f.nick + '）<br>' +
+        '账号标签　' + (f.watch
+          ? '<b style="color:#ff8a72">重点关照 ⚑</b>'
+          : '<span style="color:#8d8d8d">普通账号</span>') + '<br>' +
+        '养鱼期　　额度 ¥' + f.fishQuota + ' ｜ 倍率 ' + f.fishMult.toFixed(2) +
+          '　（' + (st.fishEnded ? '已结束 · ' + st.endNote : '进行中 · 已 ' + st.rounds + ' 局') + '）<br>' +
+        '杀猪期　　倍率 ' + f.killMult.toFixed(2) + '<br>' +
+        '提现门槛　充值 ≥¥' + th2.recharge.toLocaleString() +
+          ' 或 余额 ≥¥' + th2.balance.toLocaleString() +
+      '</div>' +
+      '<div class="mini" style="margin-top:7px;color:#8a7a5a;line-height:1.7">' +
+        '这些参数由账号昵称的哈希算出——同一昵称在任何设备上完全一致。' +
+        (f.watch ? '　<b style="color:#ff8a72">你被选中了。</b>' : '') +
+      '</div>' +
+    '</div>';
+
   body.innerHTML =
+    acctBlock +
     '<div style="font-size:13px;color:#e8c86a;margin-bottom:6px">' +
       '账号级状态 · 已记录 <b>' + st.rounds + '</b> 局 · 当前阶段：<b style="color:' +
       (fish ? '#27ae60' : '#e74c3c') + '">' + CHEAT.phase() + '</b>' +
@@ -2018,37 +2151,232 @@ function showCard(tid, isNew){
 }
 
 /* ============================================================================
-   §3.6 破产速通榜
+   §18.1 注册 / 切换账号
    ============================================================================ */
-function openBoard(){
-  const rows = [
-    ['⏱ 最快破产用时', BOARD.fastBust == null ? '—' :
-      (BOARD.fastBust < 60 ? BOARD.fastBust + ' 秒' : Math.floor(BOARD.fastBust/60) + ' 分 ' + (BOARD.fastBust%60) + ' 秒')],
-    ['💥 最大单次亏损', BOARD.maxLoss ? yuan0(BOARD.maxLoss) : '—'],
-    ['📉 最长连败', BOARD.maxStreak ? BOARD.maxStreak + ' 局' : '—'],
-    ['💳 累计充值王', BOARD.rechargeKing ? yuan0(BOARD.rechargeKing) : '—'],
-    ['☠️ 历史破产次数', BOARD.busts ? BOARD.busts + ' 次' : '0 次']
-  ];
-  const my = [
-    ['本次破产次数', S.bankruptCount + ' 次'],
-    ['本次最长连败', S.bestLoseStreak + ' 局'],
-    ['本次最大单次亏损', S.maxSingleLoss ? yuan0(S.maxSingleLoss) : '—'],
-    ['本次累计充值', yuan0(S.recharged)],
-    ['本次游玩时长', Math.floor(S.seconds/60) + ' 分 ' + (S.seconds%60) + ' 秒']
-  ];
+function openAccountPanel(force){
+  closeAllModals();
+  const list = acctList();
+  const cur = ACCT ? ACCT.nick : null;
   openModal(
-    '<h3>🏆 破产速通榜</h3>' +
-    '<div class="mini">全班同学可以比一比"谁死得快"。这个榜单会一直留在这台设备上。</div>' +
-    '<div style="margin:12px 0">' + rows.map(r =>
-      '<div class="bill-line"><span>' + r[0] + '</span><b>' + r[1] + '</b></div>').join('') + '</div>' +
-    '<div class="hr"></div>' +
-    '<div class="mini" style="color:#d4af37;margin-bottom:6px">本次记录</div>' +
-    '<div>' + my.map(r =>
-      '<div class="bill-line"><span>' + r[0] + '</span><b>' + r[1] + '</b></div>').join('') + '</div>' +
-    '<button class="btn s" data-close>关闭</button>'
-  );
+    '<h3 style="color:#ff6a55">注册即送 ¥1,000 体验金</h3>' +
+    '<input id="nickInput" class="nick-input" placeholder="请输入昵称" maxlength="12" ' +
+      'autocomplete="off" autocapitalize="off" spellcheck="false">' +
+    '<button class="btn g shine" id="doReg">一键注册，立即领取</button>' +
+    (list.length
+      ? '<div class="hr"></div>' +
+        '<div class="mini" style="color:#c9bda0;margin-bottom:7px">本机已有账号（点击切换）</div>' +
+        list.map(n => {
+          const f = accountFate(n);
+          return '<button class="btn s acct-row" data-nick="' + n + '">' +
+            '<span>🎫 ' + n + '</span>' +
+            (f.watch ? '<span class="flag">⚑</span>' : '') +
+            '<span class="mono">#' + f.id + '</span></button>';
+        }).join('')
+      : '') +
+    /* 冷色小字（§18.1 照抄） */
+    '<div class="slogan slogan-cold" style="margin-top:12px"><div class="tx">' +
+      '你正在注册的，是一个记录你怎么输的账号。</div></div>' +
+    (force ? '' : '<button class="btn s" data-close>返回游戏</button>'),
+    'gamble');
+
+  const input = $('#nickInput');
+  const reg = () => {
+    const nick = normalizeNick(input.value);
+    if (!nick){
+      input.style.borderColor = '#e8402f';
+      input.placeholder = '昵称不能为空（可用中文/字母/数字）';
+      return;
+    }
+    enterAccount(nick, true);
+  };
+  $('#doReg').onclick = reg;
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') reg(); });
+  setTimeout(() => { try { input.focus(); } catch (e) {} }, 120);
+  $$('.acct-row').forEach(b => b.onclick = () => enterAccount(b.dataset.nick, false));
+}
+/* 进入 / 切换账号：整套存档完全隔离（§18.5） */
+function enterAccount(nick, isNew){
+  ACCT = accountFate(nick);
+  Store.set(K_CUR, nick);
+  rememberAcct(nick);
+  resetState();
+  load();
+  buildNav(); renderLobby(); refreshTopbar(); renderFrozenBar(); applyCold(); renderSteps();
+  closeAllModals();
+  go('v-lobby');
+  if (S.frozen){ showFrozen(true); return; }
+  if (isNew) welcomeModal();
+}
+
+/* ============================================================================
+   §19 荣誉榜：上半段是平台的假赢家榜，下半段是本机真实战绩榜
+   落差本身就是内容——赌场挂着"荣誉榜"，点开才发现后台记的全是破产。
+   ============================================================================ */
+function boardOf(nick){
+  const d = Store.get(saveKeyOf(nick), null);
+  return d && d.board ? d.board : null;
+}
+/* 汇总本机所有账号的战绩（含当前账号尚未落盘的实时数据） */
+function bestAcrossAccounts(){
+  const rec = { fastBust:null, maxLoss:null, maxStreak:null, rechargeKing:null, busts:null };
+  const consider = (nick, b) => {
+    if (!b) return;
+    const f = accountFate(nick), id = f.id;
+    if (b.fastBust != null && (!rec.fastBust || b.fastBust < rec.fastBust.v))
+      rec.fastBust = { id:id, nick:nick, v:b.fastBust };
+    if (b.maxLoss > 0 && (!rec.maxLoss || b.maxLoss > rec.maxLoss.v))
+      rec.maxLoss = { id:id, nick:nick, v:b.maxLoss };
+    if (b.maxStreak > 0 && (!rec.maxStreak || b.maxStreak > rec.maxStreak.v))
+      rec.maxStreak = { id:id, nick:nick, v:b.maxStreak };
+    if (b.rechargeKing > 0 && (!rec.rechargeKing || b.rechargeKing > rec.rechargeKing.v))
+      rec.rechargeKing = { id:id, nick:nick, v:b.rechargeKing };
+    if (b.busts > 0 && (!rec.busts || b.busts > rec.busts.v))
+      rec.busts = { id:id, nick:nick, v:b.busts };
+  };
+  acctList().forEach(n => consider(n, boardOf(n)));
+  if (ACCT) consider(ACCT.nick, BOARD);        // 当前账号的实时数据也计入
+  return rec;
+}
+function fmtDur(sec){
+  if (sec == null) return '—';
+  return sec < 60 ? sec + ' 秒' : Math.floor(sec / 60) + ' 分 ' + (sec % 60) + ' 秒';
+}
+function openBoard(){
+  closeAllModals();
+  const r = bestAcrossAccounts();
+  const line = (label, cell, fmt) => '<div class="board-real">' + label + '：' +
+    (cell ? '账号 <b>' + cell.id + '</b>（' + cell.nick + '）｜ <b>' + fmt(cell.v) + '</b>'
+          : '<span style="color:#4a6a7a">还没有记录</span>') + '</div>';
+  openModal(
+    /* 上半段 · 平台口吻（暖色 / 金色） */
+    '<div class="board-seg gold">' +
+      '<h3 style="color:#f6e27a">🏆 本平台今日大赢家</h3>' +
+      MARQUEE.slice(0, 8).map(x => '<div class="board-row">' + x + '</div>').join('') +
+    '</div>' +
+    /* 下半段 · 我们的声音（冷色） */
+    '<div class="board-seg cold">' +
+      '<h3 style="color:#8fc7dd">同一台机器上，真实的战绩是这样的</h3>' +
+      line('最快破产', r.fastBust, fmtDur) +
+      line('最大单次亏损', r.maxLoss, v => yuan0(v)) +
+      line('最长连败', r.maxStreak, v => v + ' 局') +
+      line('累计充值王', r.rechargeKing, v => yuan0(v)) +
+      line('历史破产次数', r.busts, v => v + ' 次') +
+      '<div style="margin-top:10px;font-size:12.5px;color:#8fc7dd;line-height:1.8;' +
+        'border-top:1px solid #24404d;padding-top:9px">' +
+        '<b style="color:#d6eef8">平台给你看的是赢家，后台记的是这些。</b></div>' +
+    '</div>' +
+    '<button class="btn p" id="cardGo">📸 生成我的战绩卡片</button>' +
+    '<button class="btn s" data-close>关闭</button>',
+    'gamble');
+  $('#cardGo').onclick = openRecordCard;
+}
+
+/* ============================================================================
+   §18.6 战绩卡片（Canvas 绘制，可截图发班群）
+   ============================================================================ */
+function recordVerdict(){
+  const lost = Math.max(0, S.totalStaked - S.totalReturned);
+  const mins = Math.max(1, Math.round(S.seconds / 60));
+  if (lost <= 0) return '你还没开始输。这大概是唯一的好消息。';
+  const meals = Math.floor(lost / CONV.meal.unit);
+  const months = Math.round(lost / CONV.month.unit * 10) / 10;
+  if (lost < 100) return '你在 ' + mins + ' 分钟里输掉了 ' + meals + ' 顿食堂饭菜。';
+  if (lost < 1000) return '你在 ' + mins + ' 分钟里输掉了 ' + meals + ' 顿食堂饭菜，够吃 ' +
+    Math.max(1, Math.round(meals / 30)) + ' 个月。';
+  return '你在 ' + mins + ' 分钟内输掉了 ' + meals + ' 顿食堂饭菜（约 ' + months +
+    ' 个月生活费）——这不是运气，是数学。';
+}
+function drawRecordCard(cv){
+  const ctx = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  const lost = Math.max(0, S.totalStaked - S.totalReturned);
+  const mins = Math.floor(S.seconds / 60);
+  ctx.fillStyle = '#0d0d0d'; ctx.fillRect(0, 0, W, H);
+  /* 边框 */
+  ctx.strokeStyle = '#7a6420'; ctx.lineWidth = 3;
+  ctx.strokeRect(8, 8, W - 16, H - 16);
+  /* 标题 */
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#d4af37'; ctx.font = 'bold 26px sans-serif';
+  ctx.fillText('十赌九骗 · 战绩卡', W / 2, 58);
+  ctx.fillStyle = '#8d8d8d'; ctx.font = '13px sans-serif';
+  ctx.fillText('大学生网赌揭秘实验室', W / 2, 82);
+  /* 账号 */
+  ctx.fillStyle = '#f6e27a'; ctx.font = 'bold 18px monospace';
+  ctx.fillText('账号 ' + (ACCT ? ACCT.id : '—') + '　' + (ACCT ? ACCT.nick : ''), W / 2, 122);
+  if (ACCT && ACCT.watch){
+    ctx.fillStyle = '#e8402f'; ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('⚑ 重点关照账号', W / 2, 145);
+  }
+  /* 数据行 */
+  const rows = [
+    ['总充值', yuan0(S.recharged)],
+    ['总下注', yuan0(S.totalStaked)],
+    ['总亏损', yuan0(lost)],
+    ['破产次数', S.bankruptCount + ' 次'],
+    ['最长连败', S.bestLoseStreak + ' 局'],
+    ['存活时长', mins + ' 分钟']
+  ];
+  ctx.textAlign = 'left';
+  const top = 178, lh = 34;
+  rows.forEach((r, i) => {
+    const y = top + i * lh;
+    ctx.fillStyle = '#8d8d8d'; ctx.font = '14px sans-serif';
+    ctx.fillText(r[0], 46, y);
+    ctx.fillStyle = i === 2 ? '#e8402f' : '#e8e8e8';
+    ctx.font = 'bold 16px monospace';
+    ctx.textAlign = 'right'; ctx.fillText(r[1], W - 46, y); ctx.textAlign = 'left';
+  });
+  /* 结论 */
+  const vy = top + rows.length * lh + 18;
+  ctx.fillStyle = '#1a1a1a'; ctx.fillRect(30, vy - 26, W - 60, 62);
+  ctx.strokeStyle = '#3a2f18'; ctx.lineWidth = 1; ctx.strokeRect(30, vy - 26, W - 60, 62);
+  ctx.fillStyle = '#ffb0a0'; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center';
+  const v = recordVerdict();
+  ctx.fillText(v.slice(0, 26), W / 2, vy);
+  if (v.length > 26) ctx.fillText(v.slice(26, 52), W / 2, vy + 22);
+  /* 页脚合规声明 */
+  ctx.fillStyle = '#5f5f5f'; ctx.font = '12px sans-serif';
+  ctx.fillText('反赌教育模拟 · 所有资金均为虚拟数字', W / 2, H - 30);
+  ctx.textAlign = 'left';
+}
+function openRecordCard(){
+  closeAllModals();
+  const layer = $('#cardLayer');
+  layer.classList.remove('hide');
+  layer.innerHTML =
+    '<div class="rv-wrap">' +
+      '<canvas class="record" id="recCv" width="620" height="620"></canvas>' +
+      '<div class="mini" style="text-align:center;color:#f6e27a;font-size:13.5px">' +
+        '长按截图，发到班群里比一比谁死得快。</div>' +
+      '<button class="btn s" id="recClose">关闭</button>' +
+    '</div>';
+  drawRecordCard($('#recCv'));
+  layer.onclick = e => { if (e.target === layer) { layer.classList.add('hide'); layer.innerHTML = ''; } };
+  $('#recClose').onclick = () => { layer.classList.add('hide'); layer.innerHTML = ''; };
 }
 $('#btnBoard').onclick = openBoard;
+
+/* 首次进入的引导（每个账号各一次） */
+function welcomeModal(){
+  openModal(
+    '<h3>欢迎来到「十赌九骗」实验室</h3>' +
+    '<div class="note" style="font-size:14px;color:#d8d0c0;line-height:1.95">' +
+      '账号 <b style="color:#f6e27a">' + ACCT.id + '</b>（' + ACCT.nick + '）已开通，' +
+      '送你 <b style="color:#d4af37">¥1,000</b> 虚拟体验金，七张赌桌随便玩。<br>' +
+      '规则、赔率、概率全部真实——<b>唯一不真实的是：这些钱不是你的。</b><br><br>' +
+      '注意屏幕上同时出现的两套话术：<br>' +
+      '<span style="color:#ff8a72">红色那套，是写来让你继续下注的。</span><br>' +
+      '<span style="color:#8fc7dd">冷色那套，是给你报账的。</span><br><br>' +
+      '还有三件事：<br>' +
+      '① 每一桌的庄家优势都写在明面上，但它不会阻止你输光；<br>' +
+      '② 你可以随时"充值"，每次都会有人提醒你这些钱在现实里等于什么；<br>' +
+      '③ 你可以点"提现"——第一次它会成功，然后你会知道结果。' +
+    '</div>' +
+    '<button class="btn p" data-close>开始（我知道这是假的）</button>' +
+    '<div class="mini" style="text-align:center;margin-top:8px">' +
+      '本软件为反赌教育模拟程序，所有充值、彩金、提现均为虚拟数字，不涉及任何真实资金</div>');
+}
 
 /* ============================================================================
    大厅卡片墙
@@ -3544,6 +3872,12 @@ function renderBill(){
       '· 右下角客服说的每一句话，都是话术脚本。<br>' +
       '· <span style="color:#d6eef8">VIP5 承诺的"3 分钟极速提现"也是假的</span>——' +
       '等级越高，只是让你充得越多。<br>' +
+      (ACCT && ACCT.watch
+        ? '· 你这个账号（<span style="color:#d6eef8">#' + ACCT.id + '</span>）在注册那一刻就被打了标签：' +
+          '<span style="color:#d6eef8">重点关照</span>——提现门槛只有别人的一半。' +
+          '不是你运气不好，是你被选中了。<br>'
+        : '· 有些账号，从注册那一刻就被标记了（本机 10% 的昵称会命中）。' +
+          '不是你运气不好，是你被选中了。<br>') +
       '· 连输之后那个开始闪烁的 <span style="color:#d6eef8">"全押"按钮</span>、' +
       '输光后自动跳到更贵档位的充值弹窗、那句"一把回本，就差这一把"——' +
       '<span style="color:#d6eef8">都是设计好的，不是你的运气</span>。' +
@@ -3609,16 +3943,12 @@ viewHooks['v-about'] = { enter: renderAbout };
    初始化
    ============================================================================ */
 function init(){
-  load();
   buildNav();
   renderAbout();
   renderMarquee();
   renderBanners();
-  renderLobby();
-  refreshTopbar();
   fillSimGames();
   renderSteps();
-  renderFrozenBar();
   $('#btnWithdraw').onclick = openWithdraw;
   $('#btnRecharge').onclick = () => { if (!frozenBlock()) openRecharge(); };
   /* §15.2 👁 点开/收起冷色忠告，状态持久化 */
@@ -3627,31 +3957,15 @@ function init(){
     Store.set('jdc_cold', coldOpen);
     applyCold();
   };
+  $('#acctChip').onclick = () => openAccountPanel(false);
   applyCold();
-  /* §13.1 启动页 → 结束后再弹欢迎引导 */
+  /* §13.1 启动页 → 结束后解析账号（§18.1：首次打开要求注册） */
   runSplash(() => {
-    if (S.frozen){ showFrozen(true); return; }
-    if (!Store.get('jdc_seen', false)){
-      Store.set('jdc_seen', true);
-      openModal(
-        '<h3>欢迎来到「十赌九骗」实验室</h3>' +
-        '<div class="note" style="font-size:14px;color:#d8d0c0;line-height:1.95">' +
-          '这里给你 <b style="color:#d4af37">¥1,000</b> 虚拟本金，七张赌桌随便玩。<br>' +
-          '规则、赔率、概率全部真实——<b>唯一不真实的是：这些钱不是你的。</b><br><br>' +
-          '注意屏幕上同时出现的两套话术：<br>' +
-          '<span style="color:#ff8a72">红色那套，是写来让你继续下注的。</span><br>' +
-          '<span style="color:#8fc7dd">冷色那套，是给你报账的。</span><br><br>' +
-          '还有三件事：<br>' +
-          '① 每一桌的庄家优势都写在明面上，但它不会阻止你输光；<br>' +
-          '② 你可以随时"充值"，每次都会有人提醒你这些钱在现实里等于什么；<br>' +
-          '③ 你可以点"提现"——第一次它会成功，然后你会知道结果。' +
-        '</div>' +
-        '<button class="btn p" data-close>开始（我知道这是假的）</button>' +
-        '<div class="mini" style="text-align:center;margin-top:8px">' +
-          '本软件为反赌教育模拟程序，所有充值、彩金、提现均为虚拟数字，不涉及任何真实资金</div>'
-      );
-    }
+    const cur = Store.get(K_CUR, null);
+    if (cur && acctList().indexOf(cur) >= 0) enterAccount(cur, false);
+    else openAccountPanel(true);
   });
+
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
 else init();
